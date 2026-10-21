@@ -234,7 +234,23 @@ DATA.eras.forEach(e => {
   eraBox.appendChild(b);
 });
 
-/* ---------- me ---------- */
+/* ---------- me ----------
+ * Follow mode recentres the map on each GPS update. The moment Joe drags or
+ * pinches, follow is released, otherwise the next update (a few seconds later)
+ * snaps the map back and the map feels broken. `prog` marks the map moves WE
+ * make, so our own setView does not look like a user gesture. */
+let prog = false;
+function progView(ll, z){
+  prog = true;
+  map.setView(ll, z === undefined ? map.getZoom() : z);
+  setTimeout(() => { prog = false; }, 0);
+}
+function setFollow(on){
+  follow = on;
+  btnloc.classList.toggle('on', on);
+}
+function releaseFollow(){ if (follow && !prog) setFollow(false); }
+
 function showMe(p){
   mePos = p.latlng || {lat:p.coords.latitude, lng:p.coords.longitude};
   const acc = p.accuracy || (p.coords && p.coords.accuracy) || 30;
@@ -248,24 +264,36 @@ function showMe(p){
     meMarker.setLatLng([mePos.lat, mePos.lng]);
     meCircle.setLatLng([mePos.lat, mePos.lng]).setRadius(acc);
   }
-  if (follow) map.setView([mePos.lat, mePos.lng], Math.max(map.getZoom(), 16));
+  if (follow) progView([mePos.lat, mePos.lng], firstFix ? Math.max(map.getZoom(), 16) : undefined);
+  firstFix = false;
   if (document.getElementById('sheet').classList.contains('up')) fillSheet();
 }
 
 const btnloc = document.getElementById('btnloc');
+let firstFix = true;
 btnloc.onclick = () => {
   if (!navigator.geolocation){ alert('This phone is not offering its location to the page.'); return; }
-  follow = !follow;
-  btnloc.classList.toggle('on', follow);
-  if (follow){
-    navigator.geolocation.getCurrentPosition(showMe, err => {
-      follow = false; btnloc.classList.remove('on');
-      alert('Could not get your location (' + err.message + '). On iPhone: Settings, then Safari, then Location.');
-    }, {enableHighAccuracy:true, timeout:15000, maximumAge:5000});
-    if (!window._watch) window._watch = navigator.geolocation.watchPosition(showMe, ()=>{},
-      {enableHighAccuracy:true, maximumAge:4000});
-  }
+  if (follow){ setFollow(false); return; }   // pressing it again stops following
+  setFollow(true);
+  firstFix = true;
+  if (mePos) progView([mePos.lat, mePos.lng], Math.max(map.getZoom(), 16));
+  navigator.geolocation.getCurrentPosition(showMe, err => {
+    setFollow(false);
+    alert('Could not get your location (' + err.message + '). On iPhone: Settings, then Privacy, then Location Services, and allow Safari.');
+  }, {enableHighAccuracy:true, timeout:15000, maximumAge:5000});
+  // the dot keeps updating for the rest of the session, whether following or not
+  if (!window._watch) window._watch = navigator.geolocation.watchPosition(showMe, ()=>{},
+    {enableHighAccuracy:true, maximumAge:4000});
 };
+
+/* Any real gesture on the map hands control back to Joe. Two independent paths
+   on purpose: Leaflet's own events (guarded by `prog` so our recentre does not
+   count), and a raw finger or mouse on the map container, which we never fake,
+   so it needs no guard at all. */
+map.on('dragstart', releaseFollow);
+map.on('zoomstart', releaseFollow);
+['touchstart', 'mousedown', 'wheel'].forEach(ev =>
+  map.getContainer().addEventListener(ev, () => setFollow(false), {passive: true}));
 
 /* ---------- nearest sheet ---------- */
 const sheet = document.getElementById('sheet');
