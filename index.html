@@ -81,6 +81,18 @@
   #introcard ul{margin:0 0 14px;padding-left:20px;font-size:14.5px}
   #introcard button{width:100%;padding:13px;border-radius:12px;border:0;background:var(--ink);color:#fff;
     font-size:16px;font-weight:600;cursor:pointer}
+  /* layers panel */
+  #layers{position:absolute;z-index:560;right:10px;top:calc(env(safe-area-inset-top) + 56px);
+    width:228px;background:var(--card);border:1px solid var(--line);border-radius:14px;
+    box-shadow:0 4px 18px #00000020;padding:6px 4px;display:none}
+  #layers.show{display:block}
+  #layers h3{margin:4px 10px 6px;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
+  .lay{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;cursor:pointer;font-size:14.5px}
+  .lay:active{background:#00000008}
+  .box{flex:0 0 auto;width:20px;height:20px;border-radius:6px;border:1.5px solid var(--line);
+    background:var(--bg);display:grid;place-items:center;font-size:13px;color:#fff}
+  .lay.on .box{background:var(--accent);border-color:var(--accent)}
+  .lay .sub{display:block;font-size:11.5px;color:var(--muted);line-height:1.3}
   #legend{position:absolute;z-index:550;left:10px;bottom:0;display:none}
   .me-dot{border-radius:50%;background:#1a73e8;border:3px solid #fff;box-shadow:0 0 0 1px #0003,0 2px 6px #0004}
   .lbl{background:#fffdf9cc;border:1px solid #0000;padding:1px 5px;border-radius:6px;
@@ -98,8 +110,21 @@
 
 <div id="tools">
   <div class="btn" id="btnloc" title="Find me">◎</div>
+  <div class="btn" id="btnlayers" title="Layers">▦</div>
   <div class="btn" id="btnnear" title="Nearest to me">☰</div>
   <div class="btn" id="btninfo" title="How this works">i</div>
+</div>
+
+<div id="layers">
+  <h3>Show</h3>
+  <div class="lay on" data-k="base"><div class="box">✓</div>
+    <div>Modern map<span class="sub">Today's streets and buildings</span></div></div>
+  <div class="lay on" data-k="sites"><div class="box">✓</div>
+    <div>Places<span class="sub">Pins for the chosen year</span></div></div>
+  <div class="lay on" data-k="shapes"><div class="box">✓</div>
+    <div>Walls and ruins<span class="sub">Outlines and wall lines</span></div></div>
+  <div class="lay on" data-k="labels"><div class="box">✓</div>
+    <div>Names on the map<span class="sub">Only when zoomed in</span></div></div>
 </div>
 
 <div id="bottom">
@@ -132,10 +157,14 @@ const DATA = {"eras":[{"y":400,"l":"400 AD","s":"Constantine's new Rome, 70 year
 /* ---------- map ---------- */
 const map = L.map('map', {zoomControl:false, attributionControl:true})
   .setView([41.0105, 28.9760], 15);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+const baseTiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom:19, attribution:'&copy; OpenStreetMap, Wikidata'
 }).addTo(map);
 map.attributionControl.setPrefix('');
+
+/* which layers Joe wants to see; remembered between visits */
+const SHOW = Object.assign({base:true, sites:true, shapes:true, labels:true},
+  JSON.parse(localStorage.getItem('itm_show') || '{}'));
 
 const layer = L.layerGroup().addTo(map);
 let era = DATA.eras[1].y;            // open on Justinian, the best-looking era
@@ -192,9 +221,14 @@ function popupHtml(s){
 
 function draw(){
   layer.clearLayers();
-  const showLabels = map.getZoom() >= 16;
+  const showLabels = SHOW.labels && map.getZoom() >= 16;
 
-  DATA.shapes.filter(inEra).forEach(sh => {
+  /* with the modern map off, the page itself becomes the paper */
+  document.getElementById('map').style.background = SHOW.base ? '#e8e2d8' : '#f3ead7';
+  if (SHOW.base && !map.hasLayer(baseTiles)) baseTiles.addTo(map);
+  if (!SHOW.base && map.hasLayer(baseTiles)) map.removeLayer(baseTiles);
+
+  if (SHOW.shapes) DATA.shapes.filter(inEra).forEach(sh => {
     const style = {color: col(sh.c), weight: sh.closed ? 2 : 4, opacity:.85,
                    fillOpacity: sh.closed ? .14 : 0, dashArray: sh.closed ? '4 4' : null};
     const g = sh.closed ? L.polygon(sh.p, style) : L.polyline(sh.p, style);
@@ -204,7 +238,7 @@ function draw(){
     g.addTo(layer);
   });
 
-  sitesNow().forEach(s => {
+  if (SHOW.sites) sitesNow().forEach(s => {
     const m = L.circleMarker([s.la, s.lo], {
       radius: 8, color:'#fff', weight:2, fillColor: col(s.c), fillOpacity:.95
     }).bindPopup(popupHtml(s));
@@ -294,6 +328,23 @@ map.on('dragstart', releaseFollow);
 map.on('zoomstart', releaseFollow);
 ['touchstart', 'mousedown', 'wheel'].forEach(ev =>
   map.getContainer().addEventListener(ev, () => setFollow(false), {passive: true}));
+
+/* ---------- layers panel ---------- */
+const panel = document.getElementById('layers');
+document.getElementById('btnlayers').onclick = () => {
+  panel.classList.toggle('show');
+  document.getElementById('btnlayers').classList.toggle('on', panel.classList.contains('show'));
+};
+[...panel.querySelectorAll('.lay')].forEach(row => {
+  const k = row.dataset.k;
+  row.classList.toggle('on', !!SHOW[k]);
+  row.onclick = () => {
+    SHOW[k] = !SHOW[k];
+    row.classList.toggle('on', SHOW[k]);
+    localStorage.setItem('itm_show', JSON.stringify(SHOW));
+    draw();
+  };
+});
 
 /* ---------- nearest sheet ---------- */
 const sheet = document.getElementById('sheet');
