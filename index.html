@@ -92,6 +92,8 @@
   .box{flex:0 0 auto;width:20px;height:20px;border-radius:6px;border:1.5px solid var(--line);
     background:var(--bg);display:grid;place-items:center;font-size:13px;color:#fff}
   .lay.on .box{background:var(--accent);border-color:var(--accent)}
+  .box.rad{border-radius:50%}
+  .lay.on .box.rad{background:var(--card);border:6px solid var(--accent)}
   .lay .sub{display:block;font-size:11.5px;color:var(--muted);line-height:1.3}
   #legend{position:absolute;z-index:550;left:10px;bottom:0;display:none}
   .me-dot{border-radius:50%;background:#1a73e8;border:3px solid #fff;box-shadow:0 0 0 1px #0003,0 2px 6px #0004}
@@ -103,7 +105,9 @@
      Three Cities", which are grey relief with fine italic serif lettering ---- */
   body.book{--bg:#efe7d7;--ink:#241f18;--muted:#6b6254;--line:#cdc0a8;--card:#f7f1e4;--accent:#6b4b2a}
   body.book #map{background:#efe7d7}
-  body.book .leaflet-tile-pane{filter:grayscale(1) contrast(.82) brightness(1.1) sepia(.35)}
+  /* only tint the RELIEF; tinting the street map would make it hard to read,
+     and Joe picks the street map precisely when he wants to read it */
+  body.book.reliefbase .leaflet-tile-pane{filter:grayscale(1) contrast(.82) brightness(1.1) sepia(.35)}
   body.book .lbl{background:transparent;color:#241f18;font-weight:500;
     font-family:Palatino,"Palatino Linotype","Iowan Old Style",Georgia,serif;
     font-size:12.5px;letter-spacing:.2px;
@@ -140,9 +144,14 @@
 </div>
 
 <div id="layers">
+  <h3>Background</h3>
+  <div class="lay bg" data-bg="streets"><div class="box rad"></div>
+    <div>Today's streets<span class="sub">The ordinary map</span></div></div>
+  <div class="lay bg" data-bg="relief"><div class="box rad"></div>
+    <div>Grey relief<span class="sub">Hills and water only, like the book's plates</span></div></div>
+  <div class="lay bg" data-bg="paper"><div class="box rad"></div>
+    <div>Blank paper<span class="sub">Nothing but the old city</span></div></div>
   <h3>Show</h3>
-  <div class="lay on" data-k="base"><div class="box">✓</div>
-    <div>Modern map<span class="sub">Today's streets and buildings</span></div></div>
   <div class="lay on" data-k="sites"><div class="box">✓</div>
     <div>Places<span class="sub">Pins for the chosen year</span></div></div>
   <div class="lay on" data-k="shapes"><div class="box">✓</div>
@@ -196,9 +205,15 @@ let baseTiles = modernTiles;
 baseTiles.addTo(map);
 map.attributionControl.setPrefix('');
 
-/* which layers Joe wants to see; remembered between visits */
-const SHOW = Object.assign({base:true, sites:true, shapes:true, labels:true, book:true},
+/* What Joe wants to see, remembered between visits. `base` says which
+   background, and is deliberately separate from `book`, which is only the LOOK
+   of the drawing on top: when the two were one switch, ticking "modern map"
+   while book style was on still showed relief, which read as a broken tick box
+   (Joe, 2026-10-21). */
+const SHOW = Object.assign({base:'streets', sites:true, shapes:true, labels:true, book:true},
   JSON.parse(localStorage.getItem('itm_show') || '{}'));
+if (typeof SHOW.base === 'boolean') SHOW.base = SHOW.base ? 'streets' : 'paper';  // older saved setting
+if (!['streets', 'relief', 'paper'].includes(SHOW.base)) SHOW.base = 'streets';
 
 const layer = L.layerGroup().addTo(map);
 let era = DATA.eras[1].y;            // open on Justinian, the best-looking era
@@ -259,15 +274,16 @@ function draw(){
   const showLabels = SHOW.labels && map.getZoom() >= (book ? 15 : 16);
 
   document.body.classList.toggle('book', book);
+  document.body.classList.toggle('reliefbase', SHOW.base === 'relief');
 
-  /* swap the base between the street map and the book's grey relief */
-  const wanted = book ? reliefTiles : modernTiles;
+  /* the background is Joe's choice, independent of the look */
+  const wanted = SHOW.base === 'relief' ? reliefTiles
+               : SHOW.base === 'streets' ? modernTiles : null;
   if (wanted !== baseTiles && map.hasLayer(baseTiles)) map.removeLayer(baseTiles);
-  baseTiles = wanted;
-  document.getElementById('map').style.background = SHOW.base
-    ? (book ? '#efe7d7' : '#e8e2d8') : (book ? '#efe7d7' : '#f3ead7');
-  if (SHOW.base && !map.hasLayer(baseTiles)) baseTiles.addTo(map);
-  if (!SHOW.base && map.hasLayer(baseTiles)) map.removeLayer(baseTiles);
+  if (wanted) { baseTiles = wanted; if (!map.hasLayer(baseTiles)) baseTiles.addTo(map); }
+  document.getElementById('map').style.background =
+    SHOW.base === 'streets' ? (book ? '#efe7d7' : '#e8e2d8')
+                            : (book ? '#efe7d7' : '#f3ead7');
 
   /* the plates' area lettering: water, hills, quarters */
   if (book && SHOW.labels) (DATA.labels || []).filter(inEra).forEach(a => {
@@ -393,13 +409,24 @@ document.getElementById('btnlayers').onclick = () => {
   panel.classList.toggle('show');
   document.getElementById('btnlayers').classList.toggle('on', panel.classList.contains('show'));
 };
-[...panel.querySelectorAll('.lay')].forEach(row => {
+const saveShow = () => localStorage.setItem('itm_show', JSON.stringify(SHOW));
+
+/* the three background choices behave as one picker: exactly one is on */
+const bgRows = [...panel.querySelectorAll('.lay.bg')];
+function paintBg(){ bgRows.forEach(r => r.classList.toggle('on', r.dataset.bg === SHOW.base)); }
+bgRows.forEach(row => {
+  row.onclick = () => { SHOW.base = row.dataset.bg; paintBg(); saveShow(); draw(); };
+});
+paintBg();
+
+/* the rest are independent tick boxes */
+[...panel.querySelectorAll('.lay')].filter(r => r.dataset.k).forEach(row => {
   const k = row.dataset.k;
   row.classList.toggle('on', !!SHOW[k]);
   row.onclick = () => {
     SHOW[k] = !SHOW[k];
     row.classList.toggle('on', SHOW[k]);
-    localStorage.setItem('itm_show', JSON.stringify(SHOW));
+    saveShow();
     draw();
   };
 });
